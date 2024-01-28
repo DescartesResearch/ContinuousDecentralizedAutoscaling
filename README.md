@@ -1,2 +1,3 @@
-# ContinuousDecentralizedAutoscaling
-Tool repository for continuous decentralized autoscaling
+# Continuous Decentralized Autoscaling
+
+Documentation work in progress, finished by time of publication
