@@ -1,0 +1,6 @@
+mariadb
+sqlathanor
+SQLAlchemy==1.4.26
+flask_sqlalchemy==2.5.1
+flask
+kubernetes==26.1.0
