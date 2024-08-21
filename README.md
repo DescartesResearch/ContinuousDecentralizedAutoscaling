@@ -1,7 +1,5 @@
 # Continuous Decentralized Autoscaling
 
-Extended documentation to be added at time of publication. 
-
 Repository contents:
 - `das-library`: C program example that can be injected into service instances to enable decentralized autoscaling
 - `model`: R script that implements the formulas presented in the paper
