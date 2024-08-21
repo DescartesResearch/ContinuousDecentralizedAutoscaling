@@ -9,41 +9,49 @@ files.sources = list.files("./R", full.names = T)
 lapply(files.sources, source, echo = F)
 
 source("./autoscaling_model/jump_up/scaling_function.R")
-scaling_function <- scaling_function1 # config 1
-#scaling_function <- scaling_function2 # config 2
+#scaling_function <- scaling_function1 # config 1
+scaling_function <- scaling_function2 # config 2
 
 # Initial system state
-# We can either use the final state of a previous run ...
-#K <- readRDS("./autoscaling_model/K_hold.Rds")
-# Or use a predefined initialization state
 K <- generate_pdf(params = list(dist = "det", d = 8)) # 8 instances at start
-U <- generate_pdf(params = list(dist = "det", d = 100)) # arbitrary system state at start
-W <- generate_pdf(params = list(dist = "unif", a = 30, b = 90), xmax = 100) # config 1
-#W <- generate_pdf(params = list(dist = "unif", a = 30, b = 60), xmax = 100) # config 2
-k_max <- 500
+U <- generate_pdf(params = list(dist = "det", d = 0)) # arbitrary system state at start
+
+#W <- generate_pdf(params = list(dist = "unif", a = 30, b = 90), xmax = 100) # config 1
+W <- generate_pdf(params = list(dist = "unif", a = 30, b = 60), xmax = 100) # config 2
+k_max <- 50
+
+lambda <- 20
+mu <- 6.25
+
+difference <- Inf
+accuracy <- 0.999999
 
 # Rho history
 rho_history <-  data.frame(it = numeric(), k = numeric(), rho = numeric(), kprob = numeric())
 
 # W_Cache[[ii]] = dist of ii superimposed Ws
+
 W_Cache <- vector(mode = "list", length = k_max)
 W_Cache[[1]] <- W
 
+tmpu_cache <- vector(mode = "list", length = k_max)
+tmpu_cache[[1]] <- (events_during_time(W_Cache[[1]], reduce_dist(generate_pdf(params = list(dist = "geom0", mean = 1/lambda))), accuracy) %c%
+                      ((events_during_time(W_Cache[[1]], reduce_dist(generate_pdf(params = list(dist = "geom0", mean = 1/mu))), accuracy)) %>%
+                         mirror_distribution())) %>% reduce_dist(accuracy = accuracy)
+
 for (ii in 2:k_max) {
+  flog.info(paste0("Caching iteration: ", ii))
   W_Cache[[ii]] <- compute_superposition(W_Cache[[ii - 1]], W)
+  tmpu_cache[[ii]] <- (events_during_time(W_Cache[[ii]], reduce_dist(generate_pdf(params = list(dist = "geom0", mean = 1/lambda))), accuracy) %c%
+                         ((events_during_time(W_Cache[[ii]], reduce_dist(generate_pdf(params = list(dist = "geom0", mean = 1/mu))), accuracy) %>% convolutionN(ii, reduce = T, accuracy = accuracy)) %>%
+                            mirror_distribution())) %>% reduce_dist(accuracy = accuracy)
 }
 
-# Lambda and mu; arrival and service rate
-lambda <- 80
-mu <- 6.25
-
-# Helper variables
-difference <- Inf
-accuracy <- 0.999999
 
 df_ek <- data.frame(it = numeric(), ek = numeric(), stdk = numeric())
 df_eu <- data.frame(it = numeric(), eu = numeric(), stdu = numeric())
 df_ew <- data.frame(it = numeric(), ew = numeric(), stdw = numeric(), ewt = numeric(), stdwt = numeric())
+
 
 i <- 0
 diff_counter <- 0
@@ -75,13 +83,7 @@ while(diff_counter <= 100) {
     Wn <- W_Cache[[k]]
     Wn_local <- Wn_local %>% dist_add(Wn, weight = kprob)
 
-    tmpu <-
-      # amount of work that gets added during an inter-decision time - using pois for smoothing
-      (generate_pdf(list(dist = "pois", lambda = E(Wn) * lambda), xmax = 100, accuracy = .99999)) %c%
-      # amount of work that gets done during an inter-decision time - also w/ pois smoothing
-      # this seems to be constant since an increase in k results in a decrese in E(Wn) (same amount of work, but in a shorter period)
-      (generate_pdf(list(dist = "pois", lambda = E(Wn) * mu * k), xmax = 100, accuracy = .99999) %>% mirror_distribution())
-
+    tmpu <- tmpu_cache[[k]]
 
     # flog.info("k = %d, E(Wn) = %.2f, E(Wn x lambda) = %.2f, E(Wn x mu x k) = %.2f, E(tmpu) = %.2f, kprob = %.2f",
     #           k,
@@ -183,40 +185,20 @@ while(diff_counter <= 100) {
 
 flog.info(paste0("Final E(K): ", E(K)))
 
-df_ek_joined <- df_ek %>%
+df_data <- df_ek %>%
   left_join(df_ew, by = "it") %>%
+  left_join(df_eu, by = "it") %>%
   mutate(mean_time = cumsum(ew))
 
-ggplot(df_ek_joined, aes(x = it, y = ek, ymin = ek - stdk, ymax = ek + stdk)) +
-  geom_point() +
-  geom_line() +
-  geom_ribbon(alpha = 0.3)
+ggplot(df_data) +
+  geom_point(aes(x = mean_time, y = ek, ymin = ek - stdk, ymax = ek + stdk), color = "red") +
+  geom_line(aes(x = mean_time, y = ek, ymin = ek - stdk, ymax = ek + stdk), color = "red") +
+  #geom_ribbon(aes(x = mean_time, y = ek, ymin = ek - stdk, ymax = ek + stdk), fill = "red", alpha = 0.3) +
+  geom_point(aes(x = mean_time, y = ew, ymin = ew - stdw, ymax = ew + stdw), color = "blue") +
+  geom_line(aes(x = mean_time, y = ew, ymin = ew - stdw, ymax = ew + stdw), color = "blue") +
+  #geom_ribbon(aes(x = mean_time, y = ew, ymin = ew - stdw, ymax = ew + stdw), fill = "blue", alpha = 0.3) +
+  geom_point(aes(x = mean_time, y = eu, ymin = eu - stdu, ymax = eu + stdu), color = "orange") +
+  geom_line(aes(x = mean_time, y = eu, ymin = eu - stdu, ymax = eu + stdu), color = "orange")
 
-# ggplot(df_eu, aes(x = it, y = eu, ymin = eu - stdu, ymax = eu + stdu)) +
-#   geom_point()
-
-# ggplot(rho_history, aes(x = it, y = rho, color = as.factor(k))) +
-#   geom_point()
-
-# ggplot(
-#   rho_history %>%
-#     group_by(it) %>%
-#     summarise(meanrho = sum(rho * kprob)),
-#   aes(x = it, y = meanrho)) +
-#   geom_point()
-#
-# ggplot(
-#   rho_history %>%
-#     group_by(it) %>%
-#     summarise(meanrho = sum(rho * kprob)),
-#   aes(x = it, y = meanrho)) +
-#   geom_point() +
-#   geom_point(data = df_eu, inherit.aes = F, mapping = aes(x = it, y = eu / max(eu)))
-#
-# ggplot(
-#   rho_history %>% filter(kprob > .01),
-#   aes(x = it, y = rho, color = kprob)) +
-#   geom_point() +
-#   scale_color_viridis_c() +
-#   theme_bw(base_size = 16)
-
+# saveRDS(K, "./autoscaling_model/K_hold_config1.Rds")
+# fwrite(df_data, file = "hold_config1.csv")
